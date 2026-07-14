@@ -1,0 +1,8 @@
+.env
+*.log
+output/*.sqlite
+output/*.db
+gx/
+great_expectations/
+__pycache__/
+*.pyc

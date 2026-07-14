@@ -1,0 +1,638 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Daily Operations Pipeline Simulation</title>
+  <style>
+    :root {
+      --bg: #f7f2e8;
+      --ink: #172026;
+      --muted: #5d6872;
+      --panel: #fffaf0;
+      --line: #d9cdb8;
+      --green: #2f9e75;
+      --blue: #3b82f6;
+      --gold: #f5a524;
+      --red: #d64545;
+      --purple: #8b5cf6;
+      --shadow: 0 18px 44px rgba(38, 31, 19, 0.14);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 12% 10%, rgba(59, 130, 246, 0.14), transparent 28rem),
+        radial-gradient(circle at 88% 12%, rgba(245, 165, 36, 0.18), transparent 24rem),
+        linear-gradient(135deg, #f7f2e8 0%, #eef7f1 48%, #f4f0ff 100%);
+      min-height: 100vh;
+    }
+
+    main {
+      width: min(1160px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 32px 0 48px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
+      gap: 24px;
+      align-items: stretch;
+      margin-bottom: 22px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(2rem, 5vw, 4.5rem);
+      line-height: 0.95;
+      letter-spacing: 0;
+      max-width: 840px;
+    }
+
+    h2, h3, p {
+      margin-top: 0;
+    }
+
+    .hero-copy {
+      padding: 18px 0;
+    }
+
+    .hero-copy p {
+      max-width: 710px;
+      color: var(--muted);
+      font-size: 1.06rem;
+      line-height: 1.65;
+      margin: 18px 0 0;
+    }
+
+    .dashboard-card, .control-card, .log-card, .memo-card {
+      background: rgba(255, 250, 240, 0.88);
+      border: 1px solid rgba(98, 83, 52, 0.18);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .dashboard-card {
+      padding: 18px;
+      min-height: 244px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .mini-title {
+      color: var(--muted);
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 0.76rem;
+    }
+
+    .status-display {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px;
+      border-radius: 14px;
+      background: rgba(47, 158, 117, 0.12);
+    }
+
+    .status-display strong {
+      font-size: 1.35rem;
+    }
+
+    .pulse {
+      width: 16px;
+      height: 16px;
+      border-radius: 999px;
+      background: var(--green);
+      box-shadow: 0 0 0 8px rgba(47, 158, 117, 0.14);
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+
+    .stat {
+      padding: 12px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.55);
+      border: 1px solid rgba(23, 32, 38, 0.08);
+    }
+
+    .stat b {
+      display: block;
+      font-size: 1.55rem;
+    }
+
+    .stat span {
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
+
+    .control-card {
+      padding: 16px;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+
+    .buttons {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      appearance: none;
+      border: 0;
+      border-radius: 999px;
+      padding: 12px 16px;
+      font-weight: 800;
+      color: var(--ink);
+      background: #ffffff;
+      box-shadow: inset 0 0 0 1px rgba(23, 32, 38, 0.12);
+      cursor: pointer;
+    }
+
+    button.primary {
+      color: #ffffff;
+      background: linear-gradient(135deg, #2563eb, #7c3aed);
+      box-shadow: 0 10px 22px rgba(59, 130, 246, 0.28);
+    }
+
+    button.danger {
+      color: #ffffff;
+      background: linear-gradient(135deg, #e04f4f, #f59e0b);
+      box-shadow: 0 10px 22px rgba(214, 69, 69, 0.22);
+    }
+
+    button:disabled {
+      opacity: 0.55;
+      cursor: wait;
+    }
+
+    .pipeline {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(130px, 1fr));
+      gap: 14px;
+      margin-bottom: 20px;
+    }
+
+    .stage {
+      position: relative;
+      min-height: 220px;
+      padding: 16px;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.58);
+      border: 1px solid rgba(23, 32, 38, 0.1);
+      overflow: hidden;
+    }
+
+    .stage::after {
+      content: "";
+      position: absolute;
+      inset: auto 16px 12px 16px;
+      height: 7px;
+      border-radius: 999px;
+      background: rgba(23, 32, 38, 0.1);
+    }
+
+    .stage.done::after {
+      background: var(--green);
+    }
+
+    .stage.active {
+      outline: 3px solid rgba(59, 130, 246, 0.25);
+      background: rgba(255, 255, 255, 0.82);
+    }
+
+    .stage.fail {
+      outline: 3px solid rgba(214, 69, 69, 0.22);
+    }
+
+    .icon {
+      width: 48px;
+      height: 48px;
+      display: grid;
+      place-items: center;
+      border-radius: 16px;
+      font-size: 1.55rem;
+      margin-bottom: 12px;
+      background: rgba(59, 130, 246, 0.12);
+    }
+
+    .stage:nth-child(2) .icon { background: rgba(245, 165, 36, 0.18); }
+    .stage:nth-child(3) .icon { background: rgba(139, 92, 246, 0.14); }
+    .stage:nth-child(4) .icon { background: rgba(47, 158, 117, 0.14); }
+    .stage:nth-child(5) .icon { background: rgba(214, 69, 69, 0.12); }
+
+    .stage h2 {
+      font-size: 1.03rem;
+      margin-bottom: 8px;
+    }
+
+    .stage p {
+      color: var(--muted);
+      line-height: 1.45;
+      margin-bottom: 12px;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 0.78rem;
+      font-weight: 800;
+      background: rgba(23, 32, 38, 0.08);
+    }
+
+    .stage.done .tag {
+      color: #0d6b4b;
+      background: rgba(47, 158, 117, 0.14);
+    }
+
+    .stage.fail .tag {
+      color: #9f2f2f;
+      background: rgba(214, 69, 69, 0.13);
+    }
+
+    .flow-dot {
+      width: 18px;
+      height: 18px;
+      border-radius: 999px;
+      background: var(--blue);
+      box-shadow: 0 0 0 8px rgba(59, 130, 246, 0.14);
+      position: absolute;
+      left: 8%;
+      top: -34px;
+      transform: translateX(-50%);
+      transition: left 520ms ease, background 260ms ease;
+    }
+
+    .pipe-wrap {
+      position: relative;
+      height: 26px;
+      margin: 0 5.5% 22px;
+    }
+
+    .pipe-line {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 50%;
+      height: 5px;
+      transform: translateY(-50%);
+      border-radius: 999px;
+      background: linear-gradient(90deg, rgba(59, 130, 246, 0.22), rgba(47, 158, 117, 0.3), rgba(245, 165, 36, 0.3));
+    }
+
+    .lower-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .log-card, .memo-card {
+      padding: 18px;
+    }
+
+    .log-lines {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.9rem;
+    }
+
+    .log-line {
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: rgba(23, 32, 38, 0.06);
+      color: var(--muted);
+    }
+
+    .log-line.good {
+      color: #0d6b4b;
+      background: rgba(47, 158, 117, 0.12);
+    }
+
+    .log-line.bad {
+      color: #9f2f2f;
+      background: rgba(214, 69, 69, 0.12);
+    }
+
+    .memo-card ul {
+      padding-left: 20px;
+      margin: 12px 0 0;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .database {
+      display: grid;
+      place-items: center;
+      min-height: 120px;
+      margin-top: 14px;
+      border-radius: 18px;
+      background:
+        linear-gradient(rgba(255,255,255,0.5), rgba(255,255,255,0.1)),
+        repeating-linear-gradient(0deg, rgba(59,130,246,0.16) 0 18px, rgba(47,158,117,0.12) 18px 36px);
+      border: 1px dashed rgba(23, 32, 38, 0.22);
+    }
+
+    .database strong {
+      font-size: 1.35rem;
+    }
+
+    @media (max-width: 880px) {
+      .hero, .lower-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .pipeline {
+        grid-template-columns: 1fr;
+      }
+
+      .pipe-wrap {
+        display: none;
+      }
+
+      .stage {
+        min-height: auto;
+      }
+    }
+
+    @media (max-width: 520px) {
+      main {
+        width: min(100% - 20px, 1160px);
+        padding-top: 18px;
+      }
+
+      .stats {
+        grid-template-columns: 1fr;
+      }
+
+      button {
+        width: 100%;
+      }
+
+      .buttons {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="hero" aria-label="Pipeline simulation overview">
+      <div class="hero-copy">
+        <div class="mini-title">Interactive learner walkthrough</div>
+        <h1>Watch the daily operations pipeline run.</h1>
+        <p>Press run to see raw sensor readings move through extraction, cleaning, quality checks, safe loading, and logging. Try the bad-data run to see why the gate matters.</p>
+      </div>
+      <aside class="dashboard-card" aria-label="Run dashboard">
+        <div class="mini-title">Current run</div>
+        <div class="status-display">
+          <div>
+            <strong id="statusText">Ready</strong>
+            <p id="statusHint">Clean sensor file is waiting.</p>
+          </div>
+          <span class="pulse" id="pulse" aria-hidden="true"></span>
+        </div>
+        <div class="stats">
+          <div class="stat">
+            <b id="rowsIn">0</b>
+            <span>Rows read</span>
+          </div>
+          <div class="stat">
+            <b id="rowsClean">0</b>
+            <span>Rows cleaned</span>
+          </div>
+          <div class="stat">
+            <b id="rowsLoaded">0</b>
+            <span>Rows loaded</span>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <section class="control-card" aria-label="Simulation controls">
+      <div>
+        <div class="mini-title">Choose a scenario</div>
+        <strong id="scenarioLabel">Clean daily file</strong>
+      </div>
+      <div class="buttons">
+        <button class="primary" id="runClean" type="button">Run clean pipeline</button>
+        <button class="danger" id="runBad" type="button">Run bad-data test</button>
+        <button id="reset" type="button">Reset</button>
+      </div>
+    </section>
+
+    <div class="pipe-wrap" aria-hidden="true">
+      <div class="pipe-line"></div>
+      <div class="flow-dot" id="flowDot"></div>
+    </div>
+
+    <section class="pipeline" aria-label="Pipeline stages">
+      <article class="stage" data-stage="0">
+        <div class="icon" aria-hidden="true">1</div>
+        <h2>Extract</h2>
+        <p>Read sensor rows from the CSV file or API source listed in the settings file.</p>
+        <span class="tag">Waiting</span>
+      </article>
+      <article class="stage" data-stage="1">
+        <div class="icon" aria-hidden="true">2</div>
+        <h2>Transform</h2>
+        <p>Standardize columns, remove repeated readings, and filter negative pressure values.</p>
+        <span class="tag">Waiting</span>
+      </article>
+      <article class="stage" data-stage="2">
+        <div class="icon" aria-hidden="true">3</div>
+        <h2>Quality Gate</h2>
+        <p>Check timestamps, sensor IDs, pressure limits, temperature limits, and status values.</p>
+        <span class="tag">Waiting</span>
+      </article>
+      <article class="stage" data-stage="3">
+        <div class="icon" aria-hidden="true">4</div>
+        <h2>Load</h2>
+        <p>Replace today’s snapshot before saving, so running twice does not duplicate records.</p>
+        <span class="tag">Waiting</span>
+      </article>
+      <article class="stage" data-stage="4">
+        <div class="icon" aria-hidden="true">5</div>
+        <h2>Log</h2>
+        <p>Write the run story: start time, rows handled, quality result, and any errors.</p>
+        <span class="tag">Waiting</span>
+      </article>
+    </section>
+
+    <section class="lower-grid">
+      <article class="log-card" aria-label="Simulated pipeline log">
+        <div class="mini-title">pipeline.log</div>
+        <h2>Run messages</h2>
+        <div class="log-lines" id="logLines">
+          <div class="log-line">No run yet. The log will fill as the pipeline moves.</div>
+        </div>
+      </article>
+      <article class="memo-card" aria-label="Learner notes">
+        <div class="mini-title">What learners should notice</div>
+        <h2>Why this beats manual updates</h2>
+        <ul>
+          <li>The same steps happen in the same order every day.</li>
+          <li>Bad data stops before it reaches the final table.</li>
+          <li>Re-running today replaces today instead of stacking copies.</li>
+          <li>The log leaves a trail that helps teams diagnose problems.</li>
+        </ul>
+        <div class="database">
+          <div>
+            <strong id="databaseRows">Database: 12 rows</strong>
+            <p id="databaseNote">Last good daily snapshot remains safe.</p>
+          </div>
+        </div>
+      </article>
+    </section>
+  </main>
+
+  <script>
+    const stages = Array.from(document.querySelectorAll(".stage"));
+    const logLines = document.getElementById("logLines");
+    const flowDot = document.getElementById("flowDot");
+    const statusText = document.getElementById("statusText");
+    const statusHint = document.getElementById("statusHint");
+    const scenarioLabel = document.getElementById("scenarioLabel");
+    const rowsIn = document.getElementById("rowsIn");
+    const rowsClean = document.getElementById("rowsClean");
+    const rowsLoaded = document.getElementById("rowsLoaded");
+    const databaseRows = document.getElementById("databaseRows");
+    const databaseNote = document.getElementById("databaseNote");
+    const pulse = document.getElementById("pulse");
+    const buttons = [document.getElementById("runClean"), document.getElementById("runBad"), document.getElementById("reset")];
+
+    const cleanSteps = [
+      { stage: 0, status: "Extracting", hint: "Reading data/sensor_data.csv", rowsIn: 12, rowsClean: 0, rowsLoaded: 0, log: "INFO | Pipeline started", tone: "good" },
+      { stage: 1, status: "Cleaning", hint: "Duplicates removed: 0 | Negative pressure rows: 0", rowsIn: 12, rowsClean: 12, rowsLoaded: 0, log: "INFO | Rows after transform: 12", tone: "good" },
+      { stage: 2, status: "Checking", hint: "Six quality rules passed", rowsIn: 12, rowsClean: 12, rowsLoaded: 0, log: "INFO | Quality gate passed", tone: "good" },
+      { stage: 3, status: "Loading", hint: "Replacing snapshot date 2026-07-13", rowsIn: 12, rowsClean: 12, rowsLoaded: 12, log: "INFO | Rows loaded: 12", tone: "good" },
+      { stage: 4, status: "Complete", hint: "Safe to run again", rowsIn: 12, rowsClean: 12, rowsLoaded: 12, log: "INFO | Pipeline finished successfully", tone: "good" }
+    ];
+
+    const badSteps = [
+      { stage: 0, status: "Extracting", hint: "Reading data/sensor_data_bad_example.csv", rowsIn: 5, rowsClean: 0, rowsLoaded: 0, log: "INFO | Rows extracted: 5", tone: "good" },
+      { stage: 1, status: "Cleaning", hint: "Removed 1 duplicate and 1 negative pressure row", rowsIn: 5, rowsClean: 3, rowsLoaded: 0, log: "INFO | Rows after transform: 3", tone: "good" },
+      { stage: 2, status: "Halted", hint: "Null sensor ID and pressure above 200 failed the gate", rowsIn: 5, rowsClean: 3, rowsLoaded: 0, log: "ERROR | Quality gate failed. Load step halted.", tone: "bad", fail: true },
+      { stage: 4, status: "Logged", hint: "The final table was protected", rowsIn: 5, rowsClean: 3, rowsLoaded: 0, log: "INFO | Error details saved to pipeline.log", tone: "bad" }
+    ];
+
+    function setButtons(disabled) {
+      buttons.forEach((button) => {
+        button.disabled = disabled;
+      });
+    }
+
+    function resetSimulation() {
+      stages.forEach((stage) => {
+        stage.classList.remove("active", "done", "fail");
+        stage.querySelector(".tag").textContent = "Waiting";
+      });
+      logLines.innerHTML = '<div class="log-line">No run yet. The log will fill as the pipeline moves.</div>';
+      flowDot.style.left = "8%";
+      flowDot.style.background = "var(--blue)";
+      statusText.textContent = "Ready";
+      statusHint.textContent = "Clean sensor file is waiting.";
+      scenarioLabel.textContent = "Clean daily file";
+      rowsIn.textContent = "0";
+      rowsClean.textContent = "0";
+      rowsLoaded.textContent = "0";
+      databaseRows.textContent = "Database: 12 rows";
+      databaseNote.textContent = "Last good daily snapshot remains safe.";
+      pulse.style.background = "var(--green)";
+    }
+
+    function addLog(message, tone) {
+      if (logLines.textContent.includes("No run yet")) {
+        logLines.innerHTML = "";
+      }
+      const line = document.createElement("div");
+      line.className = `log-line ${tone === "bad" ? "bad" : "good"}`;
+      line.textContent = message;
+      logLines.appendChild(line);
+    }
+
+    function updateStage(step) {
+      stages.forEach((stage, index) => {
+        stage.classList.remove("active");
+        if (index < step.stage) {
+          stage.classList.add("done");
+          stage.querySelector(".tag").textContent = "Done";
+        }
+      });
+
+      const current = stages[step.stage];
+      current.classList.add(step.fail ? "fail" : "active");
+      current.querySelector(".tag").textContent = step.fail ? "Stopped" : "Running";
+
+      statusText.textContent = step.status;
+      statusHint.textContent = step.hint;
+      rowsIn.textContent = step.rowsIn;
+      rowsClean.textContent = step.rowsClean;
+      rowsLoaded.textContent = step.rowsLoaded;
+      flowDot.style.left = `${8 + step.stage * 21}%`;
+      flowDot.style.background = step.tone === "bad" ? "var(--red)" : "var(--blue)";
+      pulse.style.background = step.tone === "bad" ? "var(--red)" : "var(--green)";
+      addLog(step.log, step.tone);
+    }
+
+    async function runScenario(kind) {
+      resetSimulation();
+      setButtons(true);
+      const steps = kind === "bad" ? badSteps : cleanSteps;
+      scenarioLabel.textContent = kind === "bad" ? "Bad-data safety test" : "Clean daily file";
+      databaseRows.textContent = "Database: 12 rows";
+      databaseNote.textContent = kind === "bad" ? "Load is blocked unless the gate passes." : "Daily snapshot will be replaced cleanly.";
+
+      for (const step of steps) {
+        updateStage(step);
+        await new Promise((resolve) => setTimeout(resolve, 950));
+      }
+
+      if (kind === "clean") {
+        stages.forEach((stage) => {
+          stage.classList.remove("active", "fail");
+          stage.classList.add("done");
+          stage.querySelector(".tag").textContent = "Done";
+        });
+        databaseRows.textContent = "Database: 12 rows";
+        databaseNote.textContent = "Running again still leaves one clean daily snapshot.";
+      } else {
+        stages[3].querySelector(".tag").textContent = "Skipped";
+        stages[4].classList.add("done");
+        stages[4].querySelector(".tag").textContent = "Done";
+        databaseRows.textContent = "Database: unchanged";
+        databaseNote.textContent = "Bad rows never reached the final table.";
+      }
+      setButtons(false);
+    }
+
+    document.getElementById("runClean").addEventListener("click", () => runScenario("clean"));
+    document.getElementById("runBad").addEventListener("click", () => runScenario("bad"));
+    document.getElementById("reset").addEventListener("click", resetSimulation);
+    resetSimulation();
+  </script>
+</body>
+</html>
