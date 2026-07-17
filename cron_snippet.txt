@@ -1,0 +1,18 @@
+# ============================================================
+# CRON JOB - ETL Pipeline (Runs daily at 9:00 AM)
+# ============================================================
+# To install manually:
+#   1. Find your project absolute path: pwd
+#   2. Edit crontab: crontab -e
+#   3. Paste the line below (replace /absolute/path/to/project)
+#   4. Save and exit.
+#
+# To install automatically, run: bash setup_cron.sh
+# ============================================================
+
+0 9 * * * cd /absolute/path/to/week4_etl_pipeline && /usr/bin/python3 /absolute/path/to/week4_etl_pipeline/run_pipeline.py >> /absolute/path/to/week4_etl_pipeline/cron_output.log 2>&1
+
+# ============================================================
+# OPTIONAL: Run every 4 hours (uncomment below)
+# 0 */4 * * * cd /absolute/path/to/week4_etl_pipeline && /usr/bin/python3 run_pipeline.py >> cron_output.log 2>&1
+# ============================================================
