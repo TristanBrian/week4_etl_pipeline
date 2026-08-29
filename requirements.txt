@@ -1,5 +1,4 @@
-pandas>=2.0.0
-python-dotenv>=1.0.0
-great-expectations>=1.0.0
-sqlalchemy>=2.0.0
-Faker>=20.0.0
+pandas
+requests
+python-dotenv
+great_expectations

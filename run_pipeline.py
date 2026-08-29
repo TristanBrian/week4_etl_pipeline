@@ -1,249 +1,200 @@
-#!/usr/bin/env python3
-"""
-run_pipeline.py - Production ETL Pipeline for IoT Sensor Data
+from __future__ import annotations
 
-Extracts sensor data from CSV, transforms it, validates it with Great Expectations,
-and loads it into SQLite. Idempotent, cron-safe, and fully logged.
-"""
-
-import os
-import sys
 import logging
+import os
 import sqlite3
-from datetime import datetime, timedelta
-import random
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
 
 import pandas as pd
+import requests
 from dotenv import load_dotenv
-from faker import Faker
 
-# Great Expectations imports
-import great_expectations as gx
-from great_expectations.expectations import (
-    ExpectColumnToExist,
-    ExpectColumnValuesToNotBeNull,
-    ExpectColumnValuesToBeBetween,
-)
 
-# ============================================================
-# CONFIGURATION
-# ============================================================
+BASE_DIR = Path(__file__).resolve().parent
+LOG_FILE = BASE_DIR / "pipeline.log"
 
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
-env_path = os.path.join(PROJECT_ROOT, '.env')
-load_dotenv(env_path)
+def configure_logging() -> None:
+    logging.basicConfig(
+        filename=LOG_FILE,
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(message)s",
+    )
 
-DB_PATH = os.path.join(PROJECT_ROOT, os.getenv("DB_FILENAME", "pipeline.db"))
-RAW_DATA_PATH = os.path.join(PROJECT_ROOT, os.getenv("RAW_FILENAME", "raw_sensors.csv"))
-LOG_FILE = os.path.join(PROJECT_ROOT, "pipeline.log")
 
-# ============================================================
-# LOGGING
-# ============================================================
+def env_path(value: str) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else BASE_DIR / path
 
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
-logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(LOG_FILE),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
-logger = logging.getLogger(__name__)
 
-# ============================================================
-# EXTRACT - NOW WITH FAKER
-# ============================================================
-
-def generate_sample_data(num_rows=20):
-    """
-    Generates a realistic sensor dataset using Faker.
-    All values are within valid ranges (passes validation).
-    """
-    os.makedirs(PROJECT_ROOT, exist_ok=True)
-    logger.info(f"Generating {num_rows} rows of realistic sensor data at {RAW_DATA_PATH}")
-
-    fake = Faker()
-    Faker.seed(42)  # reproducible
-
-    data = {
-        "id": [f"S{i+1:03d}" for i in range(num_rows)],
-        "timestamp": [
-            (datetime.now() - timedelta(minutes=i*5)).isoformat()
-            for i in range(num_rows)
-        ],
-        "temperature": [round(random.uniform(18.0, 35.0), 1) for _ in range(num_rows)],
-        "pressure": [round(random.uniform(980.0, 1050.0), 1) for _ in range(num_rows)],
-        "humidity": [round(random.uniform(30.0, 70.0), 1) for _ in range(num_rows)],
+def load_config() -> dict[str, Any]:
+    load_dotenv(BASE_DIR / ".env")
+    config = {
+        "source_type": os.getenv("SOURCE_TYPE", "csv").lower(),
+        "source_csv": env_path(os.getenv("SOURCE_CSV", "data/sensor_data.csv")),
+        "database_path": env_path(os.getenv("DATABASE_PATH", "output/operations_daily_snapshots.sqlite")),
+        "target_table": os.getenv("TARGET_TABLE", "daily_sensor_snapshots"),
+        "snapshot_date": os.getenv("SNAPSHOT_DATE", datetime.now(timezone.utc).date().isoformat()),
+        "api_url": os.getenv("API_URL", ""),
+        "api_key": os.getenv("API_KEY", ""),
     }
-    df = pd.DataFrame(data)
-    df.to_csv(RAW_DATA_PATH, index=False)
-    logger.info(f"Generated {len(df)} rows of clean data (all valid).")
-    return df
+    return config
 
-def extract_data():
-    """Reads CSV into DataFrame. Creates sample data if missing."""
-    logger.info(f"Extracting data from {RAW_DATA_PATH}...")
-    if not os.path.exists(RAW_DATA_PATH):
-        df = generate_sample_data()
-    else:
-        df = pd.read_csv(RAW_DATA_PATH)
-        logger.info(f"Extracted {len(df)} rows.")
-    
-    if 'timestamp' in df.columns:
-        df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
-    return df
 
-# ============================================================
-# TRANSFORM (IDEMPOTENT)
-# ============================================================
+def extract_sensor_data(config: dict[str, Any]) -> pd.DataFrame:
+    """Extract raw sensor data from a CSV file or an API endpoint."""
+    if config["source_type"] == "csv":
+        logging.info("Extracting CSV source: %s", config["source_csv"])
+        return pd.read_csv(config["source_csv"])
 
-def transform_data(df):
-    """Cleans data: removes nulls, clips outliers, drops duplicates."""
-    logger.info("Transforming data...")
-    initial_count = len(df)
-    
-    # Drop rows with null IDs
-    df = df.dropna(subset=['id'])
-    
-    # Clip temperature
-    temp_min = float(os.getenv("TEMP_MIN", -50))
-    temp_max = float(os.getenv("TEMP_MAX", 100))
-    df['temperature'] = df['temperature'].clip(lower=temp_min, upper=temp_max)
-    
-    # Fix pressure (must be > 0)
-    df['pressure'] = df['pressure'].apply(
-        lambda x: 999.0 if (pd.isna(x) or x <= 0) else x
-    )
-    
-    # Clip humidity
-    df['humidity'] = df['humidity'].clip(lower=0, upper=100)
-    
-    # Idempotency: remove duplicate IDs
-    df = df.drop_duplicates(subset=['id'], keep='first')
-    
-    # Fill remaining nulls
-    df['temperature'] = df['temperature'].fillna(df['temperature'].mean())
-    df['pressure'] = df['pressure'].fillna(999.0)
-    df['humidity'] = df['humidity'].fillna(50.0)
-    
-    final_count = len(df)
-    logger.info(f"Transformed: {initial_count} -> {final_count} rows.")
-    return df
+    if config["source_type"] == "api":
+        if not config["api_url"]:
+            raise ValueError("SOURCE_TYPE is api, but API_URL is empty.")
+        headers = {}
+        if config["api_key"]:
+            headers["Authorization"] = f"Bearer {config['api_key']}"
+        logging.info("Extracting API source: %s", config["api_url"])
+        response = requests.get(config["api_url"], headers=headers, timeout=30)
+        response.raise_for_status()
+        return pd.DataFrame(response.json())
 
-# ============================================================
-# VALIDATION (GREAT EXPECTATIONS)
-# ============================================================
+    raise ValueError(f"Unsupported SOURCE_TYPE: {config['source_type']}")
 
-def validate_data(df):
+
+def transform_sensor_data(raw_df: pd.DataFrame, snapshot_date: str) -> pd.DataFrame:
+    """Clean duplicate rows and remove obviously invalid pressure readings."""
+    df = raw_df.copy()
+    df.columns = [column.strip().lower() for column in df.columns]
+
+    required_columns = ["timestamp", "sensor_id", "pressure_psi", "temperature_c", "status"]
+    missing_columns = sorted(set(required_columns) - set(df.columns))
+    if missing_columns:
+        raise ValueError(f"Input data is missing required columns: {missing_columns}")
+
+    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    df["pressure_psi"] = pd.to_numeric(df["pressure_psi"], errors="coerce")
+    df["temperature_c"] = pd.to_numeric(df["temperature_c"], errors="coerce")
+    df["sensor_id"] = df["sensor_id"].astype("string").str.strip()
+    df["status"] = df["status"].astype("string").str.strip().str.upper()
+
+    before_dedup = len(df)
+    df = df.drop_duplicates(subset=["timestamp", "sensor_id"], keep="last")
+    logging.info("Removed %s duplicate rows", before_dedup - len(df))
+
+    before_filter = len(df)
+    df = df[df["pressure_psi"].isna() | (df["pressure_psi"] >= 0)].copy()
+    logging.info("Filtered %s negative pressure rows", before_filter - len(df))
+
+    df["snapshot_date"] = snapshot_date
+    df["loaded_at_utc"] = datetime.now(timezone.utc).isoformat()
+    return df.sort_values(["timestamp", "sensor_id"]).reset_index(drop=True)
+
+
+def validate_with_great_expectations(df: pd.DataFrame) -> bool:
     """
-    Validates data with 8 Great Expectations rules.
-    Halts pipeline (sys.exit(1)) if ANY rule fails.
+    Run the quality gate.
+
+    The preferred path uses Great Expectations. If Great Expectations is unavailable
+    in a classroom environment, the same five rules are checked directly so students
+    can still observe the halt behavior.
     """
-    logger.info("Starting Great Expectations validation...")
-    
-    # Ephemeral context (no files written)
-    context = gx.get_context(mode="ephemeral")
-    
-    # Create expectation suite
-    suite_name = "sensor_suite"
-    suite = context.suites.add(gx.ExpectationSuite(name=suite_name))
-    
-    # 8 Expectations (exceeds required 5)
-    suite.add_expectation(ExpectColumnToExist(column="id"))
-    suite.add_expectation(ExpectColumnToExist(column="temperature"))
-    suite.add_expectation(ExpectColumnToExist(column="pressure"))
-    suite.add_expectation(ExpectColumnToExist(column="humidity"))
-    suite.add_expectation(ExpectColumnValuesToNotBeNull(column="id"))
-    suite.add_expectation(
-        ExpectColumnValuesToBeBetween(column="temperature", min_value=-50, max_value=100)
-    )
-    suite.add_expectation(
-        ExpectColumnValuesToBeBetween(column="pressure", min_value=0.1)
-    )
-    suite.add_expectation(
-        ExpectColumnValuesToBeBetween(column="humidity", min_value=0, max_value=100)
-    )
-    
-    logger.info(f"Loaded {len(suite.expectations)} expectations.")
-    
-    # Add pandas datasource and dataframe asset
-    datasource = context.data_sources.add_pandas("pandas_datasource")
-    asset = datasource.add_dataframe_asset("df_asset")
-    
-    # Create a batch definition
-    batch_definition = asset.add_batch_definition_whole_dataframe("batch_definition")
-    
-    # Get the batch (pass DataFrame via batch_parameters)
-    batch = batch_definition.get_batch(batch_parameters={"dataframe": df})
-    
-    # Create validator and validate
-    validator = context.get_validator(
-        batch=batch,
-        expectation_suite=suite,
-    )
-    results = validator.validate()
-    
-    # Check results
-    if not results["success"]:
-        logger.error("❌ VALIDATION FAILED - HALTING PIPELINE!")
-        for res in results["results"]:
-            if not res["success"]:
-                logger.error(f"  Failed: {res['expectation_config'].get('type', 'Unknown')}")
-        sys.exit(1)  # Hard stop
-    else:
-        logger.info("✅ All data quality checks passed!")
-        return True
-
-# ============================================================
-# LOAD (IDEMPOTENT)
-# ============================================================
-
-def load_data(df):
-    """Loads to SQLite with 'replace' mode (idempotent)."""
-    logger.info(f"Loading {len(df)} rows into {DB_PATH}...")
-    os.makedirs(os.path.dirname(DB_PATH) or '.', exist_ok=True)
-    
-    conn = sqlite3.connect(DB_PATH)
     try:
-        df.to_sql("sensor_readings", conn, if_exists="replace", index=False)
-        logger.info(f"Loaded into 'sensor_readings' (table replaced).")
-    except Exception as e:
-        logger.error(f"Load failed: {e}")
+        import great_expectations as gx  # type: ignore
+        from great_expectations.dataset import PandasDataset  # type: ignore
+
+        class SensorDataset(PandasDataset):
+            pass
+
+        ge_df = SensorDataset(df)
+        results = [
+            ge_df.expect_column_values_to_not_be_null("timestamp"),
+            ge_df.expect_column_values_to_not_be_null("sensor_id"),
+            ge_df.expect_column_values_to_be_unique("timestamp"),
+            ge_df.expect_column_values_to_be_between("pressure_psi", min_value=0, max_value=200),
+            ge_df.expect_column_values_to_be_between("temperature_c", min_value=-20, max_value=120),
+            ge_df.expect_column_values_to_be_in_set("status", ["OK", "WARN", "FAIL"]),
+        ]
+        success = all(result["success"] for result in results)
+        docs_dir = BASE_DIR / "gx" / "uncommitted" / "data_docs" / "local_site"
+        docs_dir.mkdir(parents=True, exist_ok=True)
+        report_file = docs_dir / "index.html"
+        report_rows = "".join(
+            f"<tr><td>{result['expectation_config']['expectation_type']}</td><td>{result['success']}</td></tr>"
+            for result in results
+        )
+        report_file.write_text(
+            f"<html><body><h1>Sensor Quality Gate</h1><table>{report_rows}</table></body></html>",
+            encoding="utf-8",
+        )
+        logging.info("Great Expectations version loaded: %s", getattr(gx, "__version__", "unknown"))
+        logging.info("Data Docs report: %s", report_file)
+        return success
+    except ModuleNotFoundError:
+        logging.warning("Great Expectations is not installed. Running equivalent local checks.")
+
+    checks = {
+        "timestamp has no nulls": df["timestamp"].notna().all(),
+        "sensor_id has no nulls": df["sensor_id"].notna().all(),
+        "timestamps are unique": df["timestamp"].is_unique,
+        "pressure is between 0 and 200 psi": df["pressure_psi"].between(0, 200).all(),
+        "temperature is between -20 and 120 C": df["temperature_c"].between(-20, 120).all(),
+        "status is recognized": df["status"].isin(["OK", "WARN", "FAIL"]).all(),
+    }
+    report_file = BASE_DIR / "docs" / "quality_gate_report.txt"
+    report_file.write_text("\n".join(f"{name}: {passed}" for name, passed in checks.items()), encoding="utf-8")
+    logging.info("Fallback quality report: %s", report_file)
+    return all(checks.values())
+
+
+def load_daily_snapshot(df: pd.DataFrame, config: dict[str, Any]) -> None:
+    """Load data safely by replacing only the configured daily snapshot."""
+    db_path = config["database_path"]
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {config["target_table"]} (
+                timestamp TEXT NOT NULL,
+                sensor_id TEXT NOT NULL,
+                pressure_psi REAL NOT NULL,
+                temperature_c REAL NOT NULL,
+                status TEXT NOT NULL,
+                snapshot_date TEXT NOT NULL,
+                loaded_at_utc TEXT NOT NULL,
+                PRIMARY KEY (snapshot_date, timestamp, sensor_id)
+            )
+            """
+        )
+        conn.execute(f"DELETE FROM {config['target_table']} WHERE snapshot_date = ?", (config["snapshot_date"],))
+        df.to_sql(config["target_table"], conn, if_exists="append", index=False)
+
+
+def run_pipeline() -> None:
+    configure_logging()
+    logging.info("Pipeline started")
+    config = load_config()
+
+    try:
+        raw_df = extract_sensor_data(config)
+        logging.info("Rows extracted: %s", len(raw_df))
+
+        clean_df = transform_sensor_data(raw_df, config["snapshot_date"])
+        logging.info("Rows after transform: %s", len(clean_df))
+
+        if not validate_with_great_expectations(clean_df):
+            raise ValueError("Quality gate failed. Load step halted.")
+        logging.info("Quality gate passed")
+
+        load_daily_snapshot(clean_df, config)
+        logging.info("Rows loaded: %s", len(clean_df))
+        logging.info("Pipeline finished successfully")
+    except Exception:
+        logging.exception("Pipeline failed")
         raise
-    finally:
-        conn.close()
 
-# ============================================================
-# MAIN
-# ============================================================
-
-def main():
-    start_time = datetime.now()
-    logger.info("=" * 60)
-    logger.info(f"PIPELINE STARTED at {start_time}")
-    logger.info(f"Project root: {PROJECT_ROOT}")
-    logger.info("=" * 60)
-    
-    try:
-        raw_df = extract_data()
-        clean_df = transform_data(raw_df)
-        validate_data(clean_df)
-        load_data(clean_df)
-        
-        end_time = datetime.now()
-        duration = (end_time - start_time).total_seconds()
-        logger.info("=" * 60)
-        logger.info(f"✅ SUCCESS at {end_time} (Duration: {duration:.2f}s)")
-        logger.info("=" * 60)
-    except KeyboardInterrupt:
-        logger.warning("Interrupted by user.")
-        sys.exit(1)
-    except Exception as e:
-        logger.critical(f"💥 CRASH: {e}", exc_info=True)
-        sys.exit(1)
 
 if __name__ == "__main__":
-    main()
+    run_pipeline()

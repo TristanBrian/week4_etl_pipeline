@@ -1,0 +1,6 @@
+timestamp has no nulls: True
+sensor_id has no nulls: True
+timestamps are unique: True
+pressure is between 0 and 200 psi: True
+temperature is between -20 and 120 C: True
+status is recognized: True
