@@ -6,6 +6,7 @@
 - [x] Secrets and paths are stored in `.env`; `.env.example` is safe for GitHub.
 - [x] Logging tracks start time, row counts, success, and errors in `pipeline.log`.
 - [x] Proof of automation instructions are documented in `docs/automation_proof.md`.
+- [x] One-page Technical Brief for Operations Manager documented using irrigation analogy in `docs/technical_brief.md`.
 
 ## Verification Performed
 
